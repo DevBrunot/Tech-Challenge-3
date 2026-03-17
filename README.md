@@ -1,12 +1,13 @@
-# Tech Challenge - Projeto em venv (sem Jupyter)
+# Tech Challenge Fase 3 - Machine Learning Engineering
 
-Este projeto executa todo o pipeline de Ciencia de Dados em um script Python:
+Projeto em Python Tech Challenge:
 
-- EDA (estrutura, nulos, estatisticas e graficos)
-- Engenharia de features (`PERIODO_DIA`, `DIA_SEMANA`, one-hot)
-- Modelagem supervisionada (`LogisticRegression` e `RandomForest`)
-- Modelagem nao supervisionada (`KMeans`)
-- Exportacao de resultados e figuras
+- **EDA:** estrutura, nulos, estatísticas e gráficos atraso por origem, companhia, hora.
+- **Engenharia de features:** `PERIODO_DIA`, `DIA_SEMANA`, one-hot ORIGIN, DEST, CARRIER, PERIODO_DIA.
+- **Regressão:** prever **quanto tempo o atraso vai durar** min com **Ridge** e **Random Forest**; métricas MAE, RMSE, R²; comparação de dois algoritmos.
+- **Modelagem não supervisionada:** clusterização de **voos** perfil atraso partida/chegada e de **aeroportos** volume e atraso; gráficos e interpretação.
+- **Respostas de negócio:** aeroportos e companhias mais críticos; dia da semana; perguntas guia do desafio.
+- **Apresentação crítica:** conclusões, limitações e próximos passos em `CONCLUSOES_E_LIMITACOES.md`.
 
 ## Estrutura
 
@@ -56,11 +57,10 @@ O script tenta carregar:
 
 Se quiser usar um CSV proprio, basta salvar com o nome `flights.csv` ao lado do script.
 
-## Entregaveis gerados
+## Entregáveis gerados
 
-Ao final da execucao, voce tera:
+- **Figuras:** `output/figuras` (EDA, real vs predito da regressão, clusters de voos e de aeroportos).
+- **Tabelas:** `output/tabelas` (valores ausentes, atraso por origem/companhia/hora, comparação dos modelos de regressão, resumos de clusters, respostas de negócio).
+- **Apresentação crítica:** `CONCLUSOES_E_LIMITACOES.md` (conclusões, limitações, melhorias e próximos passos).
 
-- Graficos em `output/figuras`
-- Tabelas e metricas em `output/tabelas`
-
-Isso facilita sua apresentacao sem depender de notebook.
+**Entregáveis do desafio:** repositório com código completo + vídeo de apresentação (5–10 min) explicando o trabalho, resultados e conclusões.

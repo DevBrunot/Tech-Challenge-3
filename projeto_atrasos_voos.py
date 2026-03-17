@@ -9,17 +9,10 @@ import seaborn as sns
 
 from sklearn.cluster import KMeans
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
-    accuracy_score,
-    classification_report,
-    confusion_matrix,
-    f1_score,
-    precision_score,
-    recall_score,
-)
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -179,23 +172,28 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
-def build_supervised_dataset(data: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
-    feature_cols = [
-        "MONTH",
-        "DAY",
-        "DIA_SEMANA",
-        "HOUR",
-        "DISTANCE",
-        "AIR_TIME",
-        "DEP_DELAY",
-        "ORIGIN",
-        "DEST",
-        "CARRIER",
-        "PERIODO_DIA",
-    ]
-    model_data = data[feature_cols + ["ATRASO"]].copy()
+REGRESSION_FEATURE_COLS = [
+    "MONTH",
+    "DAY",
+    "DIA_SEMANA",
+    "HOUR",
+    "DISTANCE",
+    "AIR_TIME",
+    "DEP_DELAY",
+    "ORIGIN",
+    "DEST",
+    "CARRIER",
+    "PERIODO_DIA",
+]
+
+
+def build_regression_dataset(data: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
+    """Dataset para regressão: prever quanto tempo o atraso de chegada vai durar (min)."""
+    model_data = data[REGRESSION_FEATURE_COLS + ["ARR_DELAY"]].copy()
     model_data = model_data.loc[data["ARR_DELAY"].notna()].copy()
-    return model_data[feature_cols], model_data["ATRASO"]
+    # Clip target para reduzir impacto de outliers extremos
+    model_data["ARR_DELAY"] = model_data["ARR_DELAY"].clip(lower=-60, upper=240)
+    return model_data[REGRESSION_FEATURE_COLS], model_data["ARR_DELAY"]
 
 
 def make_preprocessor() -> ColumnTransformer:
@@ -230,66 +228,86 @@ def make_preprocessor() -> ColumnTransformer:
     )
 
 
-def evaluate_model(
-    name: str, pipeline: Pipeline, x_train: pd.DataFrame, x_test: pd.DataFrame,
-    y_train: pd.Series, y_test: pd.Series, folders: Dict[str, Path]
+def evaluate_regressor(
+    name: str,
+    pipeline: Pipeline,
+    x_train: pd.DataFrame,
+    x_test: pd.DataFrame,
+    y_train: pd.Series,
+    y_test: pd.Series,
+    folders: Dict[str, Path],
 ) -> Dict[str, float]:
+    """Avalia modelo de regressão com MAE, RMSE, R² e gráfico real vs predito."""
     pipeline.fit(x_train, y_train)
     pred = pipeline.predict(x_test)
 
+    mae = mean_absolute_error(y_test, pred)
+    rmse = np.sqrt(mean_squared_error(y_test, pred))
+    r2 = r2_score(y_test, pred)
+
     metrics = {
         "Modelo": name,
-        "Accuracy": accuracy_score(y_test, pred),
-        "Precision": precision_score(y_test, pred),
-        "Recall": recall_score(y_test, pred),
-        "F1": f1_score(y_test, pred),
+        "MAE": mae,
+        "RMSE": rmse,
+        "R2": r2,
     }
 
-    print(f"\n===== {name} =====")
-    for k, v in metrics.items():
-        if k != "Modelo":
-            print(f"{k}: {v:.4f}")
-    print(classification_report(y_test, pred))
+    print(f"\n===== Regressão: {name} =====")
+    print(f"  MAE  (min): {mae:.2f}")
+    print(f"  RMSE (min): {rmse:.2f}")
+    print(f"  R²:        {r2:.4f}")
 
-    cm = confusion_matrix(y_test, pred)
-    plt.figure(figsize=(5, 4))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
-    plt.title(f"Matriz de confusao - {name}")
-    plt.xlabel("Predito")
-    plt.ylabel("Real")
+    # Gráfico: valor real vs predito
+    sample_size = min(5000, len(y_test))
+    idx = np.random.RandomState(42).choice(len(y_test), sample_size, replace=False)
+    y_s = y_test.iloc[idx].values if hasattr(y_test, "iloc") else y_test[idx]
+    p_s = pred[idx]
+    plt.figure(figsize=(6, 5))
+    plt.scatter(y_s, p_s, alpha=0.3, s=15)
+    max_val = max(y_s.max(), p_s.max())
+    min_val = min(y_s.min(), p_s.min())
+    plt.plot([min_val, max_val], [min_val, max_val], "r--", lw=2, label="Predição ideal")
+    plt.xlabel("Atraso real (min)")
+    plt.ylabel("Atraso predito (min)")
+    plt.title(f"Regressão: Real vs Predito - {name}")
+    plt.legend()
     plt.tight_layout()
-    file_name = f"confusao_{name.lower().replace(' ', '_')}.png"
-    plt.savefig(folders["figures"] / file_name, dpi=140)
+    plt.savefig(
+        folders["figures"] / f"regressao_real_vs_pred_{name.lower().replace(' ', '_')}.png",
+        dpi=140,
+    )
     plt.close()
 
     return metrics
 
 
-def run_supervised(data: pd.DataFrame, folders: Dict[str, Path]) -> pd.DataFrame:
-    x, y = build_supervised_dataset(data)
+def run_regression(data: pd.DataFrame, folders: Dict[str, Path]) -> pd.DataFrame:
+    """Regressão: prever quanto tempo o atraso vai durar. Compara 2+ algoritmos."""
+    x, y = build_regression_dataset(data)
     x_train, x_test, y_train, y_test = train_test_split(
-        x, y, test_size=0.25, random_state=42, stratify=y
+        x, y, test_size=0.25, random_state=42
     )
-    print(f"[INFO] Treino: {x_train.shape} | Teste: {x_test.shape}")
+    print(f"\n[INFO] Regressão - Treino: {x_train.shape} | Teste: {x_test.shape}")
+    print(f"[INFO] Target ARR_DELAY: min={y.min():.0f}, max={y.max():.0f} min (clip -60 a 240)")
 
     preprocessor = make_preprocessor()
 
-    logistic = Pipeline(
+    ridge = Pipeline(
         steps=[
             ("preprocess", preprocessor),
-            ("model", LogisticRegression(max_iter=250, random_state=42)),
+            ("model", Ridge(alpha=1.0, random_state=42)),
         ],
         memory=None,
     )
-    random_forest = Pipeline(
+    rf = Pipeline(
         steps=[
             ("preprocess", preprocessor),
             (
                 "model",
-                RandomForestClassifier(
-                    n_estimators=300,
+                RandomForestRegressor(
+                    n_estimators=200,
                     min_samples_split=10,
-                    min_samples_leaf=4,
+                    min_samples_leaf=5,
                     max_features="sqrt",
                     random_state=42,
                     n_jobs=-1,
@@ -299,21 +317,81 @@ def run_supervised(data: pd.DataFrame, folders: Dict[str, Path]) -> pd.DataFrame
         memory=None,
     )
 
-    m1 = evaluate_model(
-        "Logistic Regression", logistic, x_train, x_test, y_train, y_test, folders
-    )
-    m2 = evaluate_model(
-        "Random Forest", random_forest, x_train, x_test, y_train, y_test, folders
+    m1 = evaluate_regressor("Ridge", ridge, x_train, x_test, y_train, y_test, folders)
+    m2 = evaluate_regressor(
+        "Random Forest", rf, x_train, x_test, y_train, y_test, folders
     )
 
-    results = pd.DataFrame([m1, m2]).sort_values("F1", ascending=False)
-    results.to_csv(folders["tables"] / "comparacao_modelos.csv", index=False)
-    print("\n===== Comparacao final dos modelos =====")
-    print(results)
+    results = pd.DataFrame([m1, m2])
+    results.to_csv(folders["tables"] / "comparacao_regressao.csv", index=False)
+    print("\n===== Comparação dos modelos de regressão =====")
+    print(results[["Modelo", "MAE", "RMSE", "R2"]])
     return results
 
 
-def run_kmeans(data: pd.DataFrame, folders: Dict[str, Path]) -> pd.DataFrame:
+def cluster_aeroportos(data: pd.DataFrame, folders: Dict[str, Path]) -> pd.DataFrame:
+    """Clusterização de aeroportos: agrupar origens com perfil de atraso/volume semelhante."""
+    agg = (
+        data.groupby("ORIGIN", as_index=False)
+        .agg(
+            atraso_medio_chegada=("ARR_DELAY", "mean"),
+            atraso_medio_partida=("DEP_DELAY", "mean"),
+            n_voos=("ORIGIN", "count"),
+            distancia_media=("DISTANCE", "mean"),
+        )
+        .dropna()
+    )
+    agg["atraso_medio_chegada"] = agg["atraso_medio_chegada"].clip(-30, 120)
+    agg["atraso_medio_partida"] = agg["atraso_medio_partida"].clip(-30, 120)
+
+    feat_cols = ["atraso_medio_chegada", "atraso_medio_partida", "n_voos", "distancia_media"]
+    X = agg[feat_cols].copy()
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
+    agg["CLUSTER"] = kmeans.fit_predict(X_scaled)
+
+    # Gráfico: aeroportos por cluster (atraso chegada x volume)
+    plt.figure(figsize=(9, 5))
+    sns.scatterplot(
+        data=agg,
+        x="n_voos",
+        y="atraso_medio_chegada",
+        hue="CLUSTER",
+        size="distancia_media",
+        sizes=(40, 200),
+        alpha=0.8,
+        palette="Set2",
+    )
+    for _, row in agg.iterrows():
+        plt.annotate(row["ORIGIN"], (row["n_voos"], row["atraso_medio_chegada"]), fontsize=9)
+    plt.title("Clusterização de aeroportos (origem): perfil de volume e atraso")
+    plt.xlabel("Número de voos")
+    plt.ylabel("Atraso médio de chegada (min)")
+    plt.legend(title="Cluster", loc="best")
+    plt.tight_layout()
+    plt.savefig(folders["figures"] / "clusters_aeroportos.png", dpi=140)
+    plt.close()
+
+    resumo = agg.groupby("CLUSTER", as_index=False)[feat_cols].mean().round(2)
+    resumo.to_csv(folders["tables"] / "resumo_clusters_aeroportos.csv", index=False)
+    agg[["ORIGIN", "CLUSTER"] + feat_cols].to_csv(
+        folders["tables"] / "aeroportos_por_cluster.csv", index=False
+    )
+
+    print("\n===== Clusterização de aeroportos (interpretação) =====")
+    print(resumo)
+    print("Aeroportos por cluster:")
+    for c in sorted(agg["CLUSTER"].unique()):
+        oris = agg.loc[agg["CLUSTER"] == c, "ORIGIN"].tolist()
+        print(f"  Cluster {c}: {', '.join(oris)}")
+    return resumo
+
+
+def run_kmeans(data: pd.DataFrame, folders: Dict[str, Path]) -> None:
+    """Modelagem não supervisionada: clusters de voos + clusters de aeroportos."""
+    # 1) Clusters de voos (perfil distância e atrasos)
     cluster_vars = ["DISTANCE", "DEP_DELAY", "ARR_DELAY"]
     cluster_data = data[cluster_vars].dropna().copy()
     cluster_data["DEP_DELAY"] = cluster_data["DEP_DELAY"].clip(-30, 300)
@@ -336,18 +414,12 @@ def run_kmeans(data: pd.DataFrame, folders: Dict[str, Path]) -> pd.DataFrame:
         alpha=0.6,
         s=25,
     )
-    plt.title("Clusters de voos (DEP_DELAY x ARR_DELAY)")
+    plt.title("Clusters de voos: perfil de atraso na partida x chegada")
     plt.xlabel("Atraso partida (min)")
     plt.ylabel("Atraso chegada (min)")
     plt.tight_layout()
     plt.savefig(folders["figures"] / "clusters_scatter.png", dpi=140)
     plt.close()
-
-    centers = scaler.inverse_transform(kmeans.cluster_centers_)
-    centroids = pd.DataFrame(centers, columns=cluster_vars)
-    centroids["CLUSTER"] = range(len(centroids))
-    centroids = centroids[["CLUSTER"] + cluster_vars].round(2)
-    centroids.to_csv(folders["tables"] / "centroides_clusters.csv", index=False)
 
     summary = (
         cluster_data.groupby("CLUSTER", as_index=False)[cluster_vars]
@@ -356,10 +428,12 @@ def run_kmeans(data: pd.DataFrame, folders: Dict[str, Path]) -> pd.DataFrame:
         .sort_values("CLUSTER")
     )
     summary.to_csv(folders["tables"] / "resumo_clusters.csv", index=False)
-
-    print("\n===== KMeans: resumo de clusters =====")
+    print("\n===== KMeans voos: resumo (interpretação) =====")
     print(summary)
-    return summary
+    print("Cluster 0: voos com atrasos baixos; Cluster 1: distâncias longas; Cluster 2: atrasos altos.")
+
+    # 2) Clusterização de aeroportos
+    cluster_aeroportos(data, folders)
 
 
 def save_business_answers(data: pd.DataFrame, folders: Dict[str, Path]) -> None:
@@ -401,8 +475,8 @@ def main() -> None:
     data = add_features(df)
     print(f"[INFO] Shape apos engenharia de features: {data.shape}")
 
-    _ = run_supervised(data, folders)
-    _ = run_kmeans(data, folders)
+    _ = run_regression(data, folders)
+    run_kmeans(data, folders)
     save_business_answers(data, folders)
 
     print("\nConcluido com sucesso.")
